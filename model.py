@@ -1,11 +1,10 @@
 import math
 import copy
 import os
-import gdown
-from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from typing import Optional, Tuple
 
 
 def scaled_dot_product_attention(
@@ -178,41 +177,6 @@ class Transformer(nn.Module):
         self.pad_idx = pad_idx
         self.d_model = d_model
 
-        # Only try to download vocabs if we don't have vocab sizes
-        if src_vocab_size <= 1 or tgt_vocab_size <= 1:
-            import pickle, spacy
-            vocab_file = "vocabs.pt"
-            
-            if not os.path.exists(vocab_file):
-                print("Downloading vocab ->", vocab_file)
-                try:
-                    gdown.download(
-                        id="1EEwVePqLBRlW7GBzYBPWN9c8a1l6pvt5",
-                        output=vocab_file,
-                        quiet=False,
-                    )
-                except Exception as e:
-                    print(f"Could not download vocab: {e}")
-                    # If we can't download, raise error with clear message
-                    raise RuntimeError("Vocab file not found and couldn't be downloaded. "
-                                     "Please provide src_vocab_size and tgt_vocab_size explicitly.")
-
-            with open(vocab_file, "rb") as f:
-                saved = torch.load(f, map_location="cpu")
-
-            self.src_vocab = saved["src_vocab"]
-            self.tgt_vocab = saved["tgt_vocab"]
-            src_vocab_size = len(self.src_vocab)
-            tgt_vocab_size = len(self.tgt_vocab)
-            self.tgt_itos = saved["tgt_itos"]
-
-            try:
-                self.spacy_de = spacy.load("de_core_news_sm")
-            except OSError:
-                from spacy.cli import download as spacy_download
-                spacy_download("de_core_news_sm")
-                self.spacy_de = spacy.load("de_core_news_sm")
-
         enc_layer = EncoderLayer(d_model, num_heads, d_ff, dropout)
         dec_layer = DecoderLayer(d_model, num_heads, d_ff, dropout)
 
@@ -230,11 +194,35 @@ class Transformer(nn.Module):
 
         self._init_weights()
 
-        # Only try to load checkpoint if specified
         if checkpoint_path and os.path.exists(checkpoint_path):
             print(f"Loading checkpoint from {checkpoint_path}")
             ckpt = torch.load(checkpoint_path, map_location="cpu")
             state = ckpt.get("model_state_dict", ckpt)
             self.load_state_dict(state, strict=False)
-        elif checkpoint_path:
-            print(f"Warning: Checkpoint path {checkpoint_path} not found. Using fresh weights.")
+
+    def _init_weights(self):
+        for p in self.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform_(p)
+
+    def encode(self, src: torch.Tensor, src_mask: torch.Tensor) -> torch.Tensor:
+        return self.encoder(self.src_embed(src), src_mask)
+
+    def decode(
+        self,
+        memory: torch.Tensor,
+        src_mask: torch.Tensor,
+        tgt: torch.Tensor,
+        tgt_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        return self.proj(self.decoder(self.tgt_embed(tgt), memory, src_mask, tgt_mask))
+
+    def forward(
+        self,
+        src: torch.Tensor,
+        tgt: torch.Tensor,
+        src_mask: torch.Tensor,
+        tgt_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        memory = self.encode(src, src_mask)
+        return self.decode(memory, src_mask, tgt, tgt_mask)
