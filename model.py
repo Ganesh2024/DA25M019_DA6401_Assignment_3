@@ -7,6 +7,21 @@ import torch.nn.functional as F
 from typing import Optional, Tuple
 
 
+# Google Drive file IDs for auto-download
+VOCAB_GDRIVE_FILE_ID = "1ygnQcnD-GRrf8xsvzwAYKfBWGFJghlfw"
+WEIGHTS_GDRIVE_FILE_ID = "16KyLen3MM35md8YkTHK6hISZaS_O1Fqu"
+
+
+def download_from_gdrive(file_id, output_path):
+    """Download file from Google Drive if not exists"""
+    if not os.path.exists(output_path):
+        try:
+            import gdown
+            gdown.download(id=file_id, output=output_path, quiet=False)
+        except Exception as e:
+            print(f"Could not download {output_path}: {e}")
+
+
 def scaled_dot_product_attention(
     Q: torch.Tensor,
     K: torch.Tensor,
@@ -177,6 +192,32 @@ class Transformer(nn.Module):
         self.pad_idx = pad_idx
         self.d_model = d_model
 
+        # Download vocab and weights if vocab sizes not provided
+        if src_vocab_size <= 1 or tgt_vocab_size <= 1:
+            import spacy
+            
+            vocab_file = "vocabs.pt"
+            weights_file = "best_checkpoint.pt"
+            
+            download_from_gdrive(VOCAB_GDRIVE_FILE_ID, vocab_file)
+            download_from_gdrive(WEIGHTS_GDRIVE_FILE_ID, weights_file)
+            
+            with open(vocab_file, "rb") as f:
+                saved = torch.load(f, map_location="cpu")
+            
+            self.src_vocab = saved["src_vocab"]
+            self.tgt_vocab = saved["tgt_vocab"]
+            src_vocab_size = len(self.src_vocab)
+            tgt_vocab_size = len(self.tgt_vocab)
+            self.tgt_itos = saved["tgt_itos"]
+            
+            try:
+                self.spacy_de = spacy.load("de_core_news_sm")
+            except OSError:
+                from spacy.cli import download as spacy_download
+                spacy_download("de_core_news_sm")
+                self.spacy_de = spacy.load("de_core_news_sm")
+
         enc_layer = EncoderLayer(d_model, num_heads, d_ff, dropout)
         dec_layer = DecoderLayer(d_model, num_heads, d_ff, dropout)
 
@@ -226,3 +267,35 @@ class Transformer(nn.Module):
     ) -> torch.Tensor:
         memory = self.encode(src, src_mask)
         return self.decode(memory, src_mask, tgt, tgt_mask)
+
+    def infer(self, src_sentence: str) -> str:
+        self.eval()
+        device = next(self.parameters()).device
+
+        tokens = [tok.text.lower() for tok in self.spacy_de.tokenizer(src_sentence)]
+        unk_idx = self.src_vocab.get("<unk>", 0)
+        sos_idx = self.src_vocab.get("<sos>", 2)
+        eos_idx = self.src_vocab.get("<eos>", 3)
+        tgt_sos = self.tgt_vocab.get("<sos>", 2)
+        tgt_eos = self.tgt_vocab.get("<eos>", 3)
+        pad_idx = self.pad_idx
+
+        ids = [sos_idx] + [self.src_vocab.get(t, unk_idx) for t in tokens] + [eos_idx]
+        src = torch.tensor(ids, dtype=torch.long).unsqueeze(0).to(device)
+        src_mask = make_src_mask(src, pad_idx)
+
+        with torch.no_grad():
+            memory = self.encode(src, src_mask)
+            ys = torch.tensor([[tgt_sos]], dtype=torch.long, device=device)
+            for _ in range(100):
+                tgt_mask = make_tgt_mask(ys, pad_idx)
+                logits = self.decode(memory, src_mask, ys, tgt_mask)
+                next_tok = logits[:, -1, :].argmax(dim=-1, keepdim=True)
+                ys = torch.cat([ys, next_tok], dim=1)
+                if next_tok.item() == tgt_eos:
+                    break
+
+        out_ids = ys[0, 1:].tolist()
+        special = {tgt_sos, tgt_eos, pad_idx}
+        words = [self.tgt_itos[i] for i in out_ids if i not in special]
+        return " ".join(words)

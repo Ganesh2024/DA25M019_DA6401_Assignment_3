@@ -1,0 +1,31 @@
+# Checkpoints and model files
+*.pt
+*.pth
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Virtual environment
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# W&B
+wandb/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Kaggle
+.virtual_documents/
+
+# Zip files
+*.zip
