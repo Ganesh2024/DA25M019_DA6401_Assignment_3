@@ -192,31 +192,26 @@ class Transformer(nn.Module):
         self.pad_idx = pad_idx
         self.d_model = d_model
 
-        # Download vocab and weights if vocab sizes not provided
-        if src_vocab_size <= 1 or tgt_vocab_size <= 1:
-            import spacy
-            
-            vocab_file = "vocabs.pt"
-            weights_file = "best_checkpoint.pt"
-            
-            download_from_gdrive(VOCAB_GDRIVE_FILE_ID, vocab_file)
-            download_from_gdrive(WEIGHTS_GDRIVE_FILE_ID, weights_file)
-            
-            with open(vocab_file, "rb") as f:
-                saved = torch.load(f, map_location="cpu")
-            
-            self.src_vocab = saved["src_vocab"]
-            self.tgt_vocab = saved["tgt_vocab"]
-            src_vocab_size = len(self.src_vocab)
-            tgt_vocab_size = len(self.tgt_vocab)
-            self.tgt_itos = saved["tgt_itos"]
-            
-            try:
-                self.spacy_de = spacy.load("de_core_news_sm")
-            except OSError:
-                from spacy.cli import download as spacy_download
-                spacy_download("de_core_news_sm")
-                self.spacy_de = spacy.load("de_core_news_sm")
+        import spacy
+
+        vocab_file = "vocabs.pt"
+        weights_file = "best_checkpoint.pt"
+
+        download_from_gdrive(VOCAB_GDRIVE_FILE_ID, vocab_file)
+
+        saved = torch.load(vocab_file, map_location="cpu")
+        self.src_vocab = saved["src_vocab"]
+        self.tgt_vocab = saved["tgt_vocab"]
+        self.tgt_itos  = saved["tgt_itos"]
+        src_vocab_size = len(self.src_vocab)
+        tgt_vocab_size = len(self.tgt_vocab)
+
+        try:
+            self.spacy_de = spacy.load("de_core_news_sm")
+        except OSError:
+            from spacy.cli import download as spacy_download
+            spacy_download("de_core_news_sm")
+            self.spacy_de = spacy.load("de_core_news_sm")
 
         enc_layer = EncoderLayer(d_model, num_heads, d_ff, dropout)
         dec_layer = DecoderLayer(d_model, num_heads, d_ff, dropout)
@@ -235,11 +230,11 @@ class Transformer(nn.Module):
 
         self._init_weights()
 
-        if checkpoint_path and os.path.exists(checkpoint_path):
-            print(f"Loading checkpoint from {checkpoint_path}")
-            ckpt = torch.load(checkpoint_path, map_location="cpu")
-            state = ckpt.get("model_state_dict", ckpt)
-            self.load_state_dict(state, strict=False)
+        download_from_gdrive(WEIGHTS_GDRIVE_FILE_ID, weights_file)
+        ckpt = torch.load(weights_file, map_location="cpu")
+        state = ckpt.get("model_state_dict", ckpt)
+        self.load_state_dict(state, strict=False)
+        print("Weights loaded successfully.")
 
     def _init_weights(self):
         for p in self.parameters():
